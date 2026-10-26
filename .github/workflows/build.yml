@@ -8,8 +8,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '17'
           distribution: 'temurin'
@@ -17,24 +20,348 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Generate Project and Build APK
+      - name: Create Android Project Structure
         run: |
-          cat << 'EOF' > generate.py
-          import os, subprocess
-          from pathlib import Path
+          mkdir -p XiaomiRemoteProject/app/src/main/java/com/xiaomi/stickremote
+          mkdir -p XiaomiRemoteProject/gradle/wrapper
 
-          P = Path("XiaomiRemoteProject")
-          PKG = "com/xiaomi/stickremote"
-
-          FILES = {
-              "settings.gradle.kts": 'pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }\ndependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }\nrootProject.name = "XiaomiStickRemote"\ninclude(":app")',
-              "build.gradle.kts": 'plugins { id("com.android.application") version "8.2.2" apply false; id("org.jetbrains.kotlin.android") version "1.9.22" apply false }',
-              "gradle.properties": "org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8\nandroid.useAndroidX=true\nkotlin.code.style=official\nandroid.nonTransitiveRClass=true",
-              "app/build.gradle.kts": 'plugins { id("com.android.application"); id("org.jetbrains.kotlin.android") }\nandroid {\n namespace = "com.xiaomi.stickremote"\n compileSdk = 34\n defaultConfig { applicationId = "com.xiaomi.stickremote"; minSdk = 28; targetSdk = 34; versionCode = 1; versionName = "1.0" }\n compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }\n kotlinOptions { jvmTarget = "17" }\n}\ndependencies { implementation("androidx.core:core-ktx:1.12.0"); implementation("androidx.appcompat:appcompat:1.6.1"); implementation("com.google.android.material:material:1.11.0") }'
+          cat << 'EOF' > XiaomiRemoteProject/settings.gradle.kts
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
           }
-          for k, v in FILES.items():
-              p = P / k
-              p.parent.mkdir(parents=True, exist_ok=True)
-              p.write_text(v, encoding="utf-8")
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "XiaomiStickRemote"
+          include(":app")
           EOF
-          python3 generate.py
+
+          cat << 'EOF' > XiaomiRemoteProject/build.gradle.kts
+          plugins {
+              id("com.android.application") version "8.2.2" apply false
+              id("org.jetbrains.kotlin.android") version "1.9.22" apply false
+          }
+          EOF
+
+          cat << 'EOF' > XiaomiRemoteProject/gradle.properties
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          kotlin.code.style=official
+          android.nonTransitiveRClass=true
+          EOF
+
+          cat << 'EOF' > XiaomiRemoteProject/app/build.gradle.kts
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+          android {
+              namespace = "com.xiaomi.stickremote"
+              compileSdk = 34
+              defaultConfig {
+                  applicationId = "com.xiaomi.stickremote"
+                  minSdk = 28
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "1.0"
+              }
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions {
+                  jvmTarget = "17"
+              }
+          }
+          dependencies {
+              implementation("androidx.core:core-ktx:1.12.0")
+              implementation("androidx.appcompat:appcompat:1.6.1")
+              implementation("com.google.android.material:material:1.11.0")
+          }
+          EOF
+
+          cat << 'EOF' > XiaomiRemoteProject/app/src/main/AndroidManifest.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+              <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+              <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+              <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+              <uses-permission android:name="android.permission.VIBRATE" />
+              <application android:allowBackup="true" android:label="Mi Stick Remote" android:supportsRtl="true" android:theme="@style/Theme.AppCompat.NoActionBar">
+                  <activity android:name=".MainActivity" android:exported="true" android:screenOrientation="portrait">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+
+          cat << 'EOF' > XiaomiRemoteProject/app/src/main/java/com/xiaomi/stickremote/HidRemoteController.kt
+          package com.xiaomi.stickremote
+          import android.annotation.SuppressLint
+          import android.bluetooth.BluetoothAdapter
+          import android.bluetooth.BluetoothDevice
+          import android.bluetooth.BluetoothHidDevice
+          import android.bluetooth.BluetoothHidDeviceAppSdpSettings
+          import android.bluetooth.BluetoothProfile
+          import android.content.Context
+          import android.os.Handler
+          import android.os.Looper
+          import java.util.concurrent.Executors
+
+          @SuppressLint("MissingPermission")
+          class HidRemoteController(private val context: Context, private val onStateChanged: (String, Boolean) -> Unit) {
+              private val bluetoothAdapter: BluetoothAdapter? = BluetoothAdapter.getDefaultAdapter()
+              private var hidDevice: BluetoothHidDevice? = null
+              private var connectedDevice: BluetoothDevice? = null
+              private val mainHandler = Handler(Looper.getMainLooper())
+              companion object {
+                  const val REPORT_ID_KEYBOARD: Byte = 1
+                  const val REPORT_ID_CONSUMER: Byte = 2
+                  const val KEY_RIGHT: Byte = 0x4F
+                  const val KEY_LEFT: Byte = 0x50
+                  const val KEY_DOWN: Byte = 0x51
+                  const val KEY_UP: Byte = 0x52
+                  const val KEY_ENTER: Byte = 0x28
+                  const val KEY_F13: Byte = 0x68
+                  const val KEY_F14: Byte = 0x69
+                  const val CONSUMER_POWER: Int = 0x0030
+                  const val CONSUMER_MENU: Int = 0x0040
+                  const val CONSUMER_HOME: Int = 0x0223
+                  const val CONSUMER_BACK: Int = 0x0224
+                  const val CONSUMER_VOL_UP: Int = 0x00E9
+                  const val CONSUMER_VOL_DOWN: Int = 0x00EA
+                  const val CONSUMER_MUTE: Int = 0x00E2
+                  val HID_REPORT_DESC = byteArrayOf(
+                      0x05, 0x01, 0x09, 0x06, 0xA1, 0x01, 0x85, REPORT_ID_KEYBOARD, 0x05, 0x07, 0x19, 0xE0, 0x29, 0xE7, 0x15, 0x00, 0x25, 0x01, 0x75, 0x01, 0x95, 0x08, 0x81, 0x02, 0x95, 0x01, 0x75, 0x08, 0x81, 0x01, 0x95, 0x06, 0x75, 0x08, 0x15, 0x00, 0x25, 0x73, 0x05, 0x07, 0x19, 0x00, 0x29, 0x73, 0x81, 0x00, 0xC0,
+                      0x05, 0x0C, 0x09, 0x01, 0xA1, 0x01, 0x85, REPORT_ID_CONSUMER, 0x15, 0x00, 0x26, 0xFF, 0x03, 0x19, 0x00, 0x2A, 0xFF, 0x03, 0x75, 0x10, 0x95, 0x01, 0x81, 0x00, 0xC0
+                  )
+              }
+              private val hidCallback = object : BluetoothHidDevice.Callback() {
+                  override fun onAppStatusChanged(pluggedDevice: BluetoothDevice?, registered: Boolean) {
+                      notifyStatus(if (registered) "HID активен. Выберите Mi Stick" else "HID не зарегистрирован", false)
+                  }
+                  override fun onConnectionStateChanged(device: BluetoothDevice?, state: Int) {
+                      if (state == BluetoothProfile.STATE_CONNECTED) {
+                          connectedDevice = device
+                          notifyStatus("Подключено: ${device?.name ?: "Mi TV Stick"}", true)
+                      } else if (state == BluetoothProfile.STATE_DISCONNECTED) {
+                          if (connectedDevice?.address == device?.address) connectedDevice = null
+                          notifyStatus("Отключено", false)
+                      }
+                  }
+              }
+              fun initialize() {
+                  bluetoothAdapter?.getProfileProxy(context, object : BluetoothProfile.ServiceListener {
+                      override fun onServiceConnected(profile: Int, proxy: BluetoothProfile?) {
+                          if (profile == BluetoothProfile.HID_DEVICE) {
+                              hidDevice = proxy as BluetoothHidDevice
+                              val sdp = BluetoothHidDeviceAppSdpSettings("Xiaomi Mi Stick Remote", "HID Remote", "Xiaomi", BluetoothHidDevice.SUBCLASS1_COMBO, HID_REPORT_DESC)
+                              hidDevice?.registerApp(sdp, null, null, Executors.newCachedThreadPool(), hidCallback)
+                          }
+                      }
+                      override fun onServiceDisconnected(profile: Int) { hidDevice = null }
+                  }, BluetoothProfile.HID_DEVICE)
+              }
+              fun getPairedDevices(): List<BluetoothDevice> = bluetoothAdapter?.bondedDevices?.toList() ?: emptyList()
+              fun connectToDevice(device: BluetoothDevice) { hidDevice?.connect(device) }
+              fun sendKey(keyCode: Byte) {
+                  val dev = connectedDevice ?: return
+                  val hid = hidDevice ?: return
+                  hid.sendReport(dev, REPORT_ID_KEYBOARD.toInt(), byteArrayOf(0, 0, keyCode, 0, 0, 0, 0, 0))
+                  mainHandler.postDelayed({ hid.sendReport(dev, REPORT_ID_KEYBOARD.toInt(), byteArrayOf(0, 0, 0, 0, 0, 0, 0, 0)) }, 40)
+              }
+              fun sendConsumer(usage: Int) {
+                  val dev = connectedDevice ?: return
+                  val hid = hidDevice ?: return
+                  hid.sendReport(dev, REPORT_ID_CONSUMER.toInt(), byteArrayOf((usage and 0xFF).toByte(), ((usage shr 8) and 0xFF).toByte()))
+                  mainHandler.postDelayed({ hid.sendReport(dev, REPORT_ID_CONSUMER.toInt(), byteArrayOf(0, 0)) }, 40)
+              }
+              fun release() { try { hidDevice?.unregisterApp(); bluetoothAdapter?.closeProfileProxy(BluetoothProfile.HID_DEVICE, hidDevice) } catch (_: Exception) {} }
+              private fun notifyStatus(msg: String, isConnected: Boolean) { mainHandler.post { onStateChanged(msg, isConnected) } }
+          }
+          EOF
+
+          cat << 'EOF' > XiaomiRemoteProject/app/src/main/java/com/xiaomi/stickremote/QuickLaunchManager.kt
+          package com.xiaomi.stickremote
+          import android.content.Context
+          import android.widget.Toast
+          class QuickLaunchManager(private val context: Context, private val hidController: HidRemoteController) {
+              fun launchSpacedesk() {
+                  hidController.sendKey(HidRemoteController.KEY_F13)
+                  Toast.makeText(context, "Запуск spacedesk (F13)", Toast.LENGTH_SHORT).show()
+              }
+              fun launchRetroArch() {
+                  hidController.sendKey(HidRemoteController.KEY_F14)
+                  Toast.makeText(context, "Запуск RetroArch (F14)", Toast.LENGTH_SHORT).show()
+              }
+          }
+          EOF
+
+          cat << 'EOF' > XiaomiRemoteProject/app/src/main/java/com/xiaomi/stickremote/MainActivity.kt
+          package com.xiaomi.stickremote
+          import android.Manifest
+          import android.annotation.SuppressLint
+          import android.bluetooth.BluetoothDevice
+          import android.content.Context
+          import android.content.pm.PackageManager
+          import android.graphics.Color
+          import android.graphics.drawable.GradientDrawable
+          import android.os.Build
+          import android.os.Bundle
+          import android.os.VibrationEffect
+          import android.os.Vibrator
+          import android.view.Gravity
+          import android.view.View
+          import android.view.ViewGroup
+          import android.widget.*
+          import androidx.appcompat.app.AppCompatActivity
+          import androidx.core.app.ActivityCompat
+          import androidx.core.content.ContextCompat
+
+          @SuppressLint("MissingPermission")
+          class MainActivity : AppCompatActivity() {
+              private lateinit var hidController: HidRemoteController
+              private lateinit var quickLaunch: QuickLaunchManager
+              private lateinit var statusText: TextView
+              private lateinit var deviceSpinner: Spinner
+              private var pairedDevices: List<BluetoothDevice> = emptyList()
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  hidController = HidRemoteController(this) { status, connected ->
+                      statusText.text = status
+                      statusText.setTextColor(if (connected) Color.parseColor("#4CAF50") else Color.parseColor("#FFB74D"))
+                  }
+                  quickLaunch = QuickLaunchManager(this, hidController)
+                  setContentView(buildRemoteUi())
+                  checkPermissions()
+              }
+              private fun checkPermissions() {
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                      val needed = mutableListOf<String>()
+                      if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) needed.add(Manifest.permission.BLUETOOTH_CONNECT)
+                      if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) needed.add(Manifest.permission.BLUETOOTH_SCAN)
+                      if (needed.isNotEmpty()) {
+                          ActivityCompat.requestPermissions(this, needed.toTypedArray(), 101)
+                          return
+                      }
+                  }
+                  startHid()
+              }
+              override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+                  super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+                  startHid()
+              }
+              private fun startHid() {
+                  hidController.initialize()
+                  refreshDevices()
+              }
+              private fun refreshDevices() {
+                  pairedDevices = hidController.getPairedDevices()
+                  val names = if (pairedDevices.isEmpty()) listOf("Нет сопряженных устройств") else pairedDevices.map { "${it.name ?: "Устройство"} (${it.address})" }
+                  deviceSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, names)
+              }
+              private fun vibrate() {
+                  val v = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) v?.vibrate(VibrationEffect.createOneShot(25, VibrationEffect.DEFAULT_AMPLITUDE))
+                  else @Suppress("DEPRECATION") v?.vibrate(25)
+              }
+              private fun shape(colorHex: String, cornerDp: Float, strokeHex: String? = null) = GradientDrawable().apply {
+                  setColor(Color.parseColor(colorHex))
+                  cornerRadius = (cornerDp * resources.displayMetrics.density)
+                  if (strokeHex != null) setStroke(((2f * resources.displayMetrics.density)).toInt(), Color.parseColor(strokeHex))
+              }
+              private fun dp(v: Float) = (v * resources.displayMetrics.density).toInt()
+              private fun btn(text: String, bg: String = "#252528", fg: String = "#FFFFFF", radius: Float = 24f, stroke: String? = "#38383D", action: () -> Unit) = Button(this).apply {
+                  this.text = text; isAllCaps = false; setTextColor(Color.parseColor(fg)); textSize = 15f
+                  background = shape(bg, radius, stroke)
+                  setOnClickListener { vibrate(); action() }
+              }
+              private fun buildRemoteUi(): View {
+                  val root = ScrollView(this).apply { background = Color.parseColor("#121214"); isFillViewport = true }
+                  val body = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
+                      setPadding(dp(24f), dp(20f), dp(24f), dp(24f))
+                      background = shape("#1A1A1D", 44f, "#2E2E33")
+                  }
+                  root.addView(body, FrameLayout.LayoutParams(-1, -2).apply { setMargins(dp(18f), dp(16f), dp(18f), dp(16f)) })
+
+                  statusText = TextView(this).apply { text = "Инициализация..."; textColor = Color.parseColor("#FFB74D"); textSize = 13f; gravity = Gravity.CENTER }
+                  body.addView(statusText, LinearLayout.LayoutParams(-1, -2))
+
+                  val connRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(10f), 0, dp(14f)) }
+                  deviceSpinner = Spinner(this).apply { background = shape("#252528", 12f) }
+                  val cBtn = btn("Подкл.", "#2E7D32", "#FFFFFF", 14f, null) {
+                      val idx = deviceSpinner.selectedItemPosition
+                      if (idx in pairedDevices.indices) hidController.connectToDevice(pairedDevices[idx]) else refreshDevices()
+                  }
+                  connRow.addView(deviceSpinner, LinearLayout.LayoutParams(0, dp(44f), 1f).apply { rightMargin = dp(8f) })
+                  connRow.addView(cBtn, LinearLayout.LayoutParams(dp(92f), dp(44f)))
+                  body.addView(connRow, LinearLayout.LayoutParams(-1, -2))
+
+                  val topRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
+                  topRow.addView(btn("⏻", "#C62828", "#FFFFFF", 32f, null) { hidController.sendConsumer(HidRemoteController.CONSUMER_POWER) }, LinearLayout.LayoutParams(dp(64f), dp(64f)).apply { rightMargin = dp(60f) })
+                  topRow.addView(btn("🎙", "#252528", "#FFFFFF", 32f, null) { hidController.sendConsumer(HidRemoteController.CONSUMER_MENU) }, LinearLayout.LayoutParams(dp(64f), dp(64f)))
+                  body.addView(topRow, LinearLayout.LayoutParams(-2, -2).apply { bottomMargin = dp(18f) })
+
+                  val dpad = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; background = shape("#202024", 110f, "#38383D"); setPadding(dp(14f), dp(14f), dp(14f), dp(14f)) }
+                  val up = btn("▲", "#2C2C30", "#FFFFFF", 28f, null) { hidController.sendKey(HidRemoteController.KEY_UP) }
+                  val mid = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
+                  val left = btn("◀", "#2C2C30", "#FFFFFF", 28f, null) { hidController.sendKey(HidRemoteController.KEY_LEFT) }
+                  val ok = btn("OK", "#141416", "#FFFFFF", 42f, "#4A4A52") { hidController.sendKey(HidRemoteController.KEY_ENTER) }
+                  val right = btn("▶", "#2C2C30", "#FFFFFF", 28f, null) { hidController.sendKey(HidRemoteController.KEY_RIGHT) }
+                  val down = btn("▼", "#2C2C30", "#FFFFFF", 28f, null) { hidController.sendKey(HidRemoteController.KEY_DOWN) }
+                  mid.addView(left, LinearLayout.LayoutParams(dp(62f), dp(62f)))
+                  mid.addView(ok, LinearLayout.LayoutParams(dp(78f), dp(78f)).apply { leftMargin = dp(8f); rightMargin = dp(8f) })
+                  mid.addView(right, LinearLayout.LayoutParams(dp(62f), dp(62f)))
+                  dpad.addView(up, LinearLayout.LayoutParams(dp(78f), dp(56f)).apply { bottomMargin = dp(6f) })
+                  dpad.addView(mid)
+                  dpad.addView(down, LinearLayout.LayoutParams(dp(78f), dp(56f)).apply { topMargin = dp(6f) })
+                  body.addView(dpad, LinearLayout.LayoutParams(dp(236f), dp(236f)).apply { bottomMargin = dp(18f) })
+
+                  val navRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
+                  navRow.addView(btn("◁ Назад", "#252528", "#FFFFFF", 24f, null) { hidController.sendConsumer(HidRemoteController.CONSUMER_BACK) }, LinearLayout.LayoutParams(dp(110f), dp(54f)).apply { rightMargin = dp(16f) })
+                  navRow.addView(btn("○ Домой", "#252528", "#FFFFFF", 24f, null) { hidController.sendConsumer(HidRemoteController.CONSUMER_HOME) }, LinearLayout.LayoutParams(dp(110f), dp(54f)))
+                  body.addView(navRow, LinearLayout.LayoutParams(-2, -2).apply { bottomMargin = dp(16f) })
+
+                  val launchRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
+                  launchRow.addView(btn("spacedesk", "#F5F5F7", "#121214", 18f, null) { quickLaunch.launchSpacedesk() }, LinearLayout.LayoutParams(dp(110f), dp(50f)).apply { rightMargin = dp(16f) })
+                  launchRow.addView(btn("RetroArch", "#F5F5F7", "#121214", 18f, null) { quickLaunch.launchRetroArch() }, LinearLayout.LayoutParams(dp(110f), dp(50f)))
+                  body.addView(launchRow, LinearLayout.LayoutParams(-2, -2).apply { bottomMargin = dp(18f) })
+
+                  val volRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
+                  volRow.addView(btn("VOL −", "#252528", "#FFFFFF", 22f, null) { hidController.sendConsumer(HidRemoteController.CONSUMER_VOL_DOWN) }, LinearLayout.LayoutParams(dp(82f), dp(52f)).apply { rightMargin = dp(10f) })
+                  volRow.addView(btn("🔇", "#252528", "#FFFFFF", 22f, null) { hidController.sendConsumer(HidRemoteController.CONSUMER_MUTE) }, LinearLayout.LayoutParams(dp(56f), dp(52f)).apply { rightMargin = dp(10f) })
+                  volRow.addView(btn("VOL +", "#252528", "#FFFFFF", 22f, null) { hidController.sendConsumer(HidRemoteController.CONSUMER_VOL_UP) }, LinearLayout.LayoutParams(dp(82f), dp(52f)))
+                  body.addView(volRow, LinearLayout.LayoutParams(-2, -2))
+
+                  return root
+              }
+              override fun onDestroy() { super.onDestroy(); hidController.release() }
+          }
+          EOF
+
+      - name: Build with Gradle
+        run: |
+          cd XiaomiRemoteProject
+          chmod +x gradlew || true
+          gradle wrapper --gradle-version 8.4
+          ./gradlew assembleDebug
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mi-remote-apk
+          path: XiaomiRemoteProject/app/build/outputs/apk/debug/app-debug.apk
