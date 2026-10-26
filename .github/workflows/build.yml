@@ -12,13 +12,10 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
-
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
 
       - name: Create Android Project Structure
         run: |
@@ -356,9 +353,11 @@ jobs:
       - name: Build with Gradle
         run: |
           cd XiaomiRemoteProject
-          chmod +x gradlew || true
+          export ANDROID_HOME=$HOME/android-sdk
+          mkdir -p $ANDROID_HOME
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
           gradle wrapper --gradle-version 8.4
-          ./gradlew assembleDebug
+          ./gradlew assembleDebug --info
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
